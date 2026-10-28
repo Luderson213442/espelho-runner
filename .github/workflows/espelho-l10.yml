@@ -1,0 +1,64 @@
+name: espelho-l10
+
+# Monta a fila do AutoPilot (metodo Eduardo) na nuvem, sem usar o PC do Luderson.
+# Idempotente: o script checa o banco antes de cada item e pula o que ja existe.
+
+on:
+  workflow_dispatch:
+    inputs:
+      paralelo:
+        description: "threads em paralelo"
+        default: "8"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: espelho-l10
+  cancel-in-progress: false
+
+jobs:
+  rodar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: deps
+        run: pip install boto3 requests pillow cryptography
+
+      - name: env files
+        run: |
+          mkdir -p PostAutoPilot
+          printf 'SUPABASE_ACCESS_TOKEN_PROTON=%s\n' "${{ secrets.SUPABASE_ACCESS_TOKEN_PROTON }}" > PostAutoPilot/tokens_supabase_proton.env
+          {
+            printf 'R2_ACCOUNT_ID=%s\n'        "${{ secrets.R2_ACCOUNT_ID }}"
+            printf 'R2_ACCESS_KEY_ID=%s\n'     "${{ secrets.R2_ACCESS_KEY_ID }}"
+            printf 'R2_SECRET_ACCESS_KEY=%s\n' "${{ secrets.R2_SECRET_ACCESS_KEY }}"
+            printf 'R2_BUCKET=%s\n'            "${{ secrets.R2_BUCKET }}"
+            printf 'R2_PUBLIC_BASE_URL=%s\n'   "${{ secrets.R2_PUBLIC_BASE_URL }}"
+          } > PostAutoPilot/.env
+
+      - name: rodar
+        run: python cofre_claude/espelho_l10.py rodar "${{ github.event.inputs.paralelo }}"
+
+      - name: status
+        if: always()
+        run: python cofre_claude/espelho_l10.py status
+
+      - name: commit progresso
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f backlog/espelho_l10/plano.json
+          git commit -m "espelho_l10: progresso da montagem [skip ci]" || echo "sem mudanca"
+          git push || echo "push falhou"
